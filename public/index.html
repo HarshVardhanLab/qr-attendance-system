@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Attendance System</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .scanner-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin: 20px auto;
+        }
+        #scanner {
+            width: 100%;
+            border: 2px solid #333;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>QR Attendance System</h1>
+    <div class="scanner-container">
+        <video id="scanner" playsinline></video>
+    </div>
+    <div id="result"></div>
+    
+    <h2>Attendance Records</h2>
+    <table id="attendanceTable">
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Participant</th>
+                <th>Team</th>
+                <th>Ticket ID</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="attendanceBody">
+            <!-- Records will be added here -->
+        </tbody>
+    </table>
+    
+    <button id="downloadBtn">Download Attendance CSV</button>
+    
+    <script>
+        const video = document.getElementById("scanner");
+        const resultDiv = document.getElementById("result");
+        const attendanceBody = document.getElementById("attendanceBody");
+        const downloadBtn = document.getElementById("downloadBtn");
+        
+        let attendanceRecords = [];
+        
+        // Check if browser supports camera access
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            resultDiv.textContent = "Camera access is not supported by your browser";
+            resultDiv.className = "error";
+        }
+        
+        // Start camera stream
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(function(stream) {
+                video.srcObject = stream;
+                video.play();
+                requestAnimationFrame(scanQR);
+            })
+            .catch(function(err) {
+                resultDiv.textContent = "Error accessing camera: " + err.message;
+                resultDiv.className = "error";
+            });
+        
+        function scanQR() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                const canvas = document.createElement("canvas");
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const context = canvas.getContext("2d");
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                
+                if (code) {
+                    try {
+                        const data = JSON.parse(code.data);
+                        
+                        // Validate the QR data structure
+                        if (validateQRData(data)) {
+                            // Check if this ticket has already been scanned
+                            const existingRecord = attendanceRecords.find(
+                                record => record.ticket_id === data.ticket_id
+                            );
+                            
+                            if (!existingRecord) {
+                                // Add to records
+                                attendanceRecords.push(data);
+                                
+                                // Add to table
+                                const row = document.createElement("tr");
+                                row.innerHTML = `
+                                    <td>${new Date(data.timestamp).toLocaleString()}</td>
+                                    <td>${data.participant}</td>
+                                    <td>${data.team_name} (${data.team_code})</td>
+                                    <td>${data.ticket_id}</td>
+                                    <td>✅</td>
+                                `;
+                                attendanceBody.appendChild(row);
+                                
+                                resultDiv.textContent = `Attendance recorded for ${data.participant}`;
+                                resultDiv.className = "success";
+                            } else {
+                                resultDiv.textContent = `Ticket ${data.ticket_id} already scanned`;
+                                resultDiv.className = "error";
+                            }
+                        } else {
+                            resultDiv.textContent = "Invalid QR code format";
+                            resultDiv.className = "error";
+                        }
+                    } catch (e) {
+                        resultDiv.textContent = "Invalid QR code data";
+                        resultDiv.className = "error";
+                    }
+                }
+            }
+            
+            requestAnimationFrame(scanQR);
+        }
+        
+        function validateQRData(data) {
+            const requiredFields = [
+                "event", "ticket_id", "team_code", 
+                "team_name", "participant", "email",
+                "mobile", "timestamp", "validation"
+            ];
+            
+            for (const field of requiredFields) {
+                if (!(field in data)) {
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+        
+        downloadBtn.addEventListener("click", function() {
+            if (attendanceRecords.length === 0) {
+                resultDiv.textContent = "No attendance records to download";
+                resultDiv.className = "error";
+                return;
+            }
+            
+            // Create CSV content
+            let csvContent = "Timestamp,Event,Ticket ID,Team Code,Team Name,Participant,Email,Mobile,Validation\n";
+            
+            attendanceRecords.forEach(record => {
+                csvContent += `"${record.timestamp}","${record.event}","${record.ticket_id}",`;
+                csvContent += `"${record.team_code}","${record.team_name}","${record.participant}",`;
+                csvContent += `"${record.email}","${record.mobile}","${record.validation}"\n`;
+            });
+            
+            // Create download link
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `attendance_${new Date().toISOString().slice(0,10)}.csv`);
+            link.style.visibility = "hidden";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            resultDiv.textContent = "CSV file downloaded successfully";
+            resultDiv.className = "success";
+        });
+    </script>
+</body>
+</html>
